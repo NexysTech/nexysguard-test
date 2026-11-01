@@ -1,0 +1,74 @@
+# DRAFT, not wired in. NexysGuard quality gates. Copy to .github/workflows/nexysguard.yml in a repo.
+# The repo also needs: scripts/check-secrets.sh (copy of gates/check-secrets.sh) and these npm scripts:
+#   build, typecheck (tsc --noEmit), test, test:a11y (axe via Playwright), lighthouse.
+# Must-pass jobs fail the run. The Lighthouse job may miss: it logs a notice and never blocks.
+# Action versions: actions/checkout@v7 and actions/setup-node@v7 are the versions shown in each action's README
+# on github.com (checked 1 Nov 2026). Major tags move; pin to a commit SHA once Alexander approves.
+name: NexysGuard
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  build-and-test:            # MUST PASS: build, strict TypeScript, no any, tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm run build
+      - run: grep -Eq '"strict"[[:space:]]*:[[:space:]]*true' tsconfig.json
+      - run: npm run typecheck
+      - name: no "any" in source
+        run: |
+          if grep -rnE --include='*.ts' --include='*.tsx' ':[[:space:]]*any\b|\bas any\b|<any>' src; then
+            echo "::error::'any' found in source"; exit 1
+          fi
+      - run: npm test
+
+  secrets:                   # MUST PASS: no secrets in code (local script, no third-party action)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash scripts/check-secrets.sh .
+
+  accessibility:             # MUST PASS: axe, WCAG 2.2 AA tags, no serious or critical findings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:a11y   # project test using @axe-core/playwright, tags wcag2a, wcag2aa, wcag21a, wcag21aa, wcag22aa
+
+  lighthouse:                # SHOULD PASS: 90+ on mobile; a miss is logged, not blocked
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm run lighthouse
+      - if: failure()
+        run: echo "::warning::Lighthouse below 90. The reviewer must log a written reason (README, should-pass gates)."
+
+  gate:                      # the one check to require in branch protection
+    needs: [build-and-test, secrets, accessibility]
+    # Always runs. Without this, a failed gate makes this job skip, and GitHub's docs say a skipped
+    # job reports success, so a required check could pass on a bad change.
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: every must-pass gate passed
+        run: |
+          test "${{ needs.build-and-test.result }}" = success
+          test "${{ needs.secrets.result }}" = success
+          test "${{ needs.accessibility.result }}" = success
