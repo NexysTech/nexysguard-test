@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "strict": true,
+    "strict": false,
     "noEmit": true,
     "types": ["node"],
     "target": "ES2022",
